@@ -1,0 +1,546 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2018-05-01/subscriptionDeploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.13.1.58284",
+      "templateHash": "14319733215278048914"
+    }
+  },
+  "parameters": {
+    "projectName": {
+      "type": "string",
+      "metadata": {
+        "description": "Provide a name for the storage account. Use only lower case letters and numbers. The name must be unique across Azure."
+      },
+      "maxLength": 16,
+      "minLength": 3
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "westeurope",
+      "metadata": {
+        "description": "Standard: westeu/..."
+      }
+    },
+    "envName": {
+      "type": "string",
+      "defaultValue": "dev",
+      "metadata": {
+        "description": "Provide an environment name: dev/test/qa/prod"
+      },
+      "maxLength": 4,
+      "minLength": 2
+    }
+  },
+  "variables": {
+    "azureDatabricksName": "[format('{0}-{1}-databricks', parameters('projectName'), parameters('envName'))]",
+    "synapseName": "[format('{0}-{1}', parameters('projectName'), parameters('envName'))]",
+    "storageName": "[format('{0}{1}', parameters('projectName'), parameters('envName'))]",
+    "keyVaultName": "[format('{0}-kv-{1}', parameters('projectName'), parameters('envName'))]",
+    "containerNameList": [
+      "landing",
+      "raw",
+      "intermediate",
+      "clean"
+    ]
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Resources/resourceGroups",
+      "apiVersion": "2021-04-01",
+      "name": "[format('rg-{0}-{1}', parameters('projectName'), parameters('envName'))]",
+      "location": "[parameters('location')]"
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2020-10-01",
+      "name": "r_keyVault",
+      "resourceGroup": "[format('rg-{0}-{1}', parameters('projectName'), parameters('envName'))]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "keyVaultName": {
+            "value": "[variables('keyVaultName')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.13.1.58284",
+              "templateHash": "15620405358232400534"
+            }
+          },
+          "parameters": {
+            "keyVaultName": {
+              "type": "string"
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.KeyVault/vaults",
+              "apiVersion": "2022-07-01",
+              "name": "[parameters('keyVaultName')]",
+              "location": "[resourceGroup().location]",
+              "properties": {
+                "accessPolicies": [],
+                "sku": {
+                  "family": "A",
+                  "name": "standard"
+                },
+                "tenantId": "[subscription().tenantId]",
+                "enableSoftDelete": true
+              }
+            }
+          ],
+          "outputs": {
+            "r_keyvault_id": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.KeyVault/vaults', parameters('keyVaultName'))]"
+            },
+            "r_keyvault_name": {
+              "type": "string",
+              "value": "[parameters('keyVaultName')]"
+            },
+            "r_keyvault_uri": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.KeyVault/vaults', parameters('keyVaultName')), '2022-07-01').vaultUri]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', format('rg-{0}-{1}', parameters('projectName'), parameters('envName')))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2020-10-01",
+      "name": "r_synapseWorkspace",
+      "resourceGroup": "[format('rg-{0}-{1}', parameters('projectName'), parameters('envName'))]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "synapseName": {
+            "value": "[variables('synapseName')]"
+          },
+          "storageName": {
+            "value": "[variables('storageName')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.13.1.58284",
+              "templateHash": "9794896145612399695"
+            }
+          },
+          "parameters": {
+            "synapseName": {
+              "type": "string"
+            },
+            "storageName": {
+              "type": "string"
+            }
+          },
+          "variables": {
+            "storageEnvironmentDNS": "[environment().suffixes.storage]",
+            "dataLakeStorageAccountUrl": "[format('https://{0}.dfs.{1}', parameters('storageName'), variables('storageEnvironmentDNS'))]"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Synapse/workspaces",
+              "apiVersion": "2021-06-01",
+              "name": "[parameters('synapseName')]",
+              "location": "[resourceGroup().location]",
+              "identity": {
+                "type": "SystemAssigned"
+              },
+              "properties": {
+                "defaultDataLakeStorage": {
+                  "accountUrl": "[variables('dataLakeStorageAccountUrl')]",
+                  "filesystem": "workspace"
+                }
+              }
+            },
+            {
+              "type": "Microsoft.Synapse/workspaces/firewallRules",
+              "apiVersion": "2021-06-01",
+              "name": "[format('{0}/{1}', parameters('synapseName'), 'AllowAllNetworks')]",
+              "properties": {
+                "startIpAddress": "0.0.0.0",
+                "endIpAddress": "255.255.255.255"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Synapse/workspaces', parameters('synapseName'))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "r_synapse_PrincipalId": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.Synapse/workspaces', parameters('synapseName')), '2021-06-01', 'full').identity.principalId]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', format('rg-{0}-{1}', parameters('projectName'), parameters('envName')))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2020-10-01",
+      "name": "r_dataLake",
+      "resourceGroup": "[format('rg-{0}-{1}', parameters('projectName'), parameters('envName'))]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "storageName": {
+            "value": "[variables('storageName')]"
+          },
+          "containerNameList": {
+            "value": "[variables('containerNameList')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.13.1.58284",
+              "templateHash": "12046185163665846489"
+            }
+          },
+          "parameters": {
+            "storageName": {
+              "type": "string"
+            },
+            "containerNameList": {
+              "type": "array"
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Storage/storageAccounts",
+              "apiVersion": "2021-02-01",
+              "name": "[parameters('storageName')]",
+              "location": "[resourceGroup().location]",
+              "properties": {
+                "isHnsEnabled": true,
+                "accessTier": "Hot"
+              },
+              "sku": {
+                "name": "Standard_LRS"
+              },
+              "identity": {
+                "type": "SystemAssigned"
+              },
+              "kind": "StorageV2"
+            },
+            {
+              "type": "Microsoft.Storage/storageAccounts/blobServices",
+              "apiVersion": "2022-09-01",
+              "name": "[format('{0}/{1}', parameters('storageName'), 'default')]",
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageName'))]"
+              ]
+            },
+            {
+              "copy": {
+                "name": "r_containers",
+                "count": "[length(parameters('containerNameList'))]"
+              },
+              "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+              "apiVersion": "2022-09-01",
+              "name": "[format('{0}/{1}/{2}', parameters('storageName'), 'default', parameters('containerNameList')[copyIndex()])]",
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts/blobServices', parameters('storageName'), 'default')]"
+              ]
+            }
+          ],
+          "outputs": {
+            "r_dataLake_StorageAccountID": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageName'))]"
+            },
+            "r_dataLake_StorageAccountName": {
+              "type": "string",
+              "value": "[parameters('storageName')]"
+            },
+            "r_dataLake_StorageAccount_PrincipalId": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageName')), '2021-02-01', 'full').identity.principalId]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', format('rg-{0}-{1}', parameters('projectName'), parameters('envName')))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2020-10-01",
+      "name": "r_synapseAcessPoliciesToKeyVault",
+      "resourceGroup": "[format('rg-{0}-{1}', parameters('projectName'), parameters('envName'))]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "keyVaultName": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, format('rg-{0}-{1}', parameters('projectName'), parameters('envName'))), 'Microsoft.Resources/deployments', 'r_keyVault'), '2020-10-01').outputs.r_keyvault_name.value]"
+          },
+          "synapseWorkspacePrincipalId": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, format('rg-{0}-{1}', parameters('projectName'), parameters('envName'))), 'Microsoft.Resources/deployments', 'r_synapseWorkspace'), '2020-10-01').outputs.r_synapse_PrincipalId.value]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.13.1.58284",
+              "templateHash": "12984550233477708815"
+            }
+          },
+          "parameters": {
+            "keyVaultName": {
+              "type": "string"
+            },
+            "synapseWorkspacePrincipalId": {
+              "type": "string"
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.KeyVault/vaults/accessPolicies",
+              "apiVersion": "2022-07-01",
+              "name": "[format('{0}/{1}', parameters('keyVaultName'), 'add')]",
+              "properties": {
+                "accessPolicies": [
+                  {
+                    "objectId": "[parameters('synapseWorkspacePrincipalId')]",
+                    "tenantId": "[subscription().tenantId]",
+                    "permissions": {
+                      "secrets": [
+                        "get",
+                        "list"
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "dependsOn": [
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, format('rg-{0}-{1}', parameters('projectName'), parameters('envName'))), 'Microsoft.Resources/deployments', 'r_keyVault')]",
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, format('rg-{0}-{1}', parameters('projectName'), parameters('envName'))), 'Microsoft.Resources/deployments', 'r_synapseWorkspace')]",
+        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', format('rg-{0}-{1}', parameters('projectName'), parameters('envName')))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2020-10-01",
+      "name": "r_rbac",
+      "resourceGroup": "[format('rg-{0}-{1}', parameters('projectName'), parameters('envName'))]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "synapseWorkspacePrincipalID": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, format('rg-{0}-{1}', parameters('projectName'), parameters('envName'))), 'Microsoft.Resources/deployments', 'r_synapseWorkspace'), '2020-10-01').outputs.r_synapse_PrincipalId.value]"
+          },
+          "storageAccountName": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, format('rg-{0}-{1}', parameters('projectName'), parameters('envName'))), 'Microsoft.Resources/deployments', 'r_dataLake'), '2020-10-01').outputs.r_dataLake_StorageAccountName.value]"
+          },
+          "databricksName": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, format('rg-{0}-{1}', parameters('projectName'), parameters('envName'))), 'Microsoft.Resources/deployments', 'r_databricks'), '2020-10-01').outputs.r_databricksName.value]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.13.1.58284",
+              "templateHash": "5904340258677286061"
+            }
+          },
+          "parameters": {
+            "synapseWorkspacePrincipalID": {
+              "type": "string"
+            },
+            "storageAccountName": {
+              "type": "string"
+            },
+            "databricksName": {
+              "type": "string"
+            }
+          },
+          "variables": {
+            "azureRBACStorageBlobDataContributorRoleID": "ba92f5b4-2d11-453d-a403-e96b0029c9fe",
+            "azureRBACOwnerID": "8e3af657-a8ff-443c-a75c-2fe8c4bcb635",
+            "azureContributorID": "b24988ac-6180-42a0-ab88-20f7382dd24c"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[format('Microsoft.Storage/storageAccounts/{0}', parameters('storageAccountName'))]",
+              "name": "[guid(parameters('storageAccountName'))]",
+              "properties": {
+                "roleDefinitionId": "[resourceId('Microsoft.Authorization/roleDefinitions', variables('azureRBACStorageBlobDataContributorRoleID'))]",
+                "principalId": "[parameters('synapseWorkspacePrincipalID')]",
+                "principalType": "ServicePrincipal"
+              }
+            },
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[format('Microsoft.Databricks/workspaces/{0}', parameters('databricksName'))]",
+              "name": "[guid(parameters('databricksName'))]",
+              "properties": {
+                "roleDefinitionId": "[resourceId('Microsoft.Authorization/roleDefinitions', variables('azureContributorID'))]",
+                "principalId": "[parameters('synapseWorkspacePrincipalID')]",
+                "principalType": "ServicePrincipal"
+              }
+            }
+          ]
+        }
+      },
+      "dependsOn": [
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, format('rg-{0}-{1}', parameters('projectName'), parameters('envName'))), 'Microsoft.Resources/deployments', 'r_databricks')]",
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, format('rg-{0}-{1}', parameters('projectName'), parameters('envName'))), 'Microsoft.Resources/deployments', 'r_dataLake')]",
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, format('rg-{0}-{1}', parameters('projectName'), parameters('envName'))), 'Microsoft.Resources/deployments', 'r_synapseWorkspace')]",
+        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', format('rg-{0}-{1}', parameters('projectName'), parameters('envName')))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2020-10-01",
+      "name": "r_databricks",
+      "resourceGroup": "[format('rg-{0}-{1}', parameters('projectName'), parameters('envName'))]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "azureDatabricksName": {
+            "value": "[variables('azureDatabricksName')]"
+          },
+          "akv_id": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, format('rg-{0}-{1}', parameters('projectName'), parameters('envName'))), 'Microsoft.Resources/deployments', 'r_keyVault'), '2020-10-01').outputs.r_keyvault_id.value]"
+          },
+          "akv_uri": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, format('rg-{0}-{1}', parameters('projectName'), parameters('envName'))), 'Microsoft.Resources/deployments', 'r_keyVault'), '2020-10-01').outputs.r_keyvault_uri.value]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.13.1.58284",
+              "templateHash": "8211527601916755272"
+            }
+          },
+          "parameters": {
+            "azureDatabricksName": {
+              "type": "string"
+            },
+            "akv_id": {
+              "type": "string"
+            },
+            "akv_uri": {
+              "type": "string"
+            },
+            "force_update": {
+              "type": "string",
+              "defaultValue": "[utcNow()]"
+            },
+            "adb_secret_scope_name": {
+              "type": "string",
+              "defaultValue": "SecretScope"
+            },
+            "adb_cluster_name": {
+              "type": "string",
+              "defaultValue": "ETL Cluster"
+            },
+            "adb_spark_version": {
+              "type": "string",
+              "defaultValue": "11.1.x-scala2.12"
+            },
+            "adb_node_type": {
+              "type": "string",
+              "defaultValue": "Standard_D3_v2"
+            },
+            "adb_num_worker": {
+              "type": "string",
+              "defaultValue": "1"
+            },
+            "adb_auto_terminate_min": {
+              "type": "string",
+              "defaultValue": "60"
+            },
+            "adb_pat_lifetime": {
+              "type": "string",
+              "defaultValue": "3600"
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Databricks/workspaces",
+              "apiVersion": "2022-04-01-preview",
+              "name": "[parameters('azureDatabricksName')]",
+              "location": "[resourceGroup().location]",
+              "sku": {
+                "name": "premium"
+              },
+              "properties": {
+                "managedResourceGroupId": "[subscriptionResourceId('Microsoft.Resources/resourceGroups', format('databricks-rg-{0}-{1}', parameters('azureDatabricksName'), uniqueString(parameters('azureDatabricksName'), resourceGroup().id)))]"
+              }
+            }
+          ],
+          "outputs": {
+            "r_databricksName": {
+              "type": "string",
+              "value": "[parameters('azureDatabricksName')]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, format('rg-{0}-{1}', parameters('projectName'), parameters('envName'))), 'Microsoft.Resources/deployments', 'r_keyVault')]",
+        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', format('rg-{0}-{1}', parameters('projectName'), parameters('envName')))]"
+      ]
+    }
+  ]
+}
